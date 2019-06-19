@@ -6,9 +6,11 @@ import           Control.Applicative
 import           Control.Monad
 import           Control.Monad.Except
 import           Control.Monad.Reader
+import           Data.Maybe
 
 import           Howard.Expr
 import           Howard.NonDet
+import           Howard.Syntax        (printExpr)
 
 data Envir = Envir
     { binds  :: [(Id, Expr)]
@@ -25,7 +27,18 @@ data TypeError
     = OutOfScope Name
     | MisMatch Type Type
     | NonType Expr
-    deriving Show
+
+printTypeError :: TypeError -> String
+printTypeError = fromMaybe "unknown error" . \case
+    OutOfScope n -> Just $ "Out of scope: " ++ show n
+    MisMatch x y -> do
+        xs <- printExpr x
+        ys <- printExpr y
+        return $ "Couldn't match type " ++ xs ++ " with " ++ ys
+    NonType x -> do
+        xs <- printExpr x
+        return $ xs ++ " is not a type"
+
 
 -- type Interpreter e = ExceptT e (Reader Envir)
 
@@ -52,19 +65,19 @@ tcConstr :: Binder -> Binder -> TypeChecker Envir
 tcConstr b c = return mempty { consts = [c] }
 
 tcExpr :: Expr -> TypeChecker Type
-tcExpr = \case
+tcExpr (Expr e) = case e of
     Var n -> lookupType n
     Lam x b -> do
         ta <- tcParam x
-        tb <- local (<> paramBinds x Omitted)
+        tb <- local (<> paramBinds x omittedTerm)
             $ tcExpr b
-        return $ Forall True (Wildcard $ TypedId True ta "_") tb
-    Set n -> return $ Set (n + 1)
+        return $ Expr $ Forall True (Wildcard $ TypedId True ta "_") tb
+    Set n -> return $ Expr $ Set (n + 1)
     Forall _ x a -> do
         t <- tcParam x
         _ <- tcType a
-        return $ Set typeLevel
-    _     -> return Omitted
+        return $ Expr $ Set typeLevel
+    _     -> return omittedTerm
 
 tcParam :: Param -> TypeChecker Type
 tcParam = \case
@@ -78,10 +91,10 @@ tcId x = do
 
 tcType :: Type -> TypeChecker Kind
 tcType t = do
-    k <- tcExpr t >>= eval
-    case k of
+    Expr k <- tcExpr t >>= eval
+    Expr <$> case k of
         Set n -> return $ Set (n + 1)
-        _     -> throwError $ NonType k
+        _     -> throwError $ NonType $ Expr k
 
 paramBinds :: Param -> Expr -> Envir
 paramBinds (Wildcard _) e = mempty
@@ -106,14 +119,15 @@ lookupConst n = do
     when (null cs) $ throwError (OutOfScope n)
 
 unify :: Type -> Type -> TypeChecker Type
-unify (Var n) (Var m) | n == m = return $ Var n
-unify (Set n) (Set m) | n == m = return $ Set n
-unify a Omitted       = return a
-unify Omitted b       = return b
-unify a b             = throwError $ MisMatch a b
+unify (Expr a) (Expr b) = Expr <$> case (a, b) of
+    (Var n,   Var m)   | n == m -> return $ Var n
+    (Set n,   Set m)   | n == m -> return $ Set n
+    (_,       Omitted)          -> return a
+    (Omitted, _)                -> return b
+    (_,       _)                -> throwError $ MisMatch (Expr a) (Expr b)
 
 eval :: Expr -> TypeChecker Expr
-eval = \case
+eval (Expr a) = case a of
     Var n -> lookupBind n
-         <|> Var n <$ lookupConst n
+         <|> Expr (Var n) <$ lookupConst n
 

@@ -45,7 +45,7 @@ repl = do
                 maybe (return ()) outputStrLn $ printDecl d
                 case typeCheckDecl env d of
                     Left es -> do
-                        mapM_ (outputStrLn . show) es
+                        mapM_ (outputStrLn . printTypeError) es
                         return env
                     Right [env'] -> return $ env <> env'
                     Right ts -> do
@@ -60,7 +60,7 @@ repl = do
             Right e  -> do
                 maybe (return ()) outputStrLn $ printExpr e
                 case typeCheckExpr env e of
-                    Left es -> mapM_ (outputStrLn . show) es
+                    Left es -> mapM_ (outputStrLn . printTypeError) es
                     Right [t] -> do
                         outputStr " : "
                         maybe (return ()) outputStrLn $ printExpr t

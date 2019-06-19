@@ -1,4 +1,5 @@
 {-# LANGUAGE KindSignatures  #-}
+{-# LANGUAGE LambdaCase      #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections   #-}
 
@@ -34,6 +35,7 @@ import           Howard.Util
 fun   = $(constructorIso 'Fun)
 data_ = $(constructorIso 'Data)
 defineIsomorphisms ''Expr
+defineIsomorphisms ''Expr'
 defineIsomorphisms ''Id
 defineIsomorphisms ''Param
 
@@ -52,6 +54,7 @@ parseExpr = runParser exprSyn
 
 printExpr :: Expr -> Maybe String
 printExpr = print exprSyn
+
 
 
 -- omittedExpr :: Expr
@@ -75,26 +78,29 @@ exprSyn :: Syntax d => d Expr
 exprSyn
     -- = app <$> termSyn <*> termSyn
       -- = funType <$> exprSyn <* funSign <*> exprSyn
-      = chainl1 appSyn funSign (funType . inverse (id *** (commute . unit)))
+      = chainl1 appSyn funSign (funType . inverse (second (commute . unit)))
 
 appSyn :: Syntax d => d Expr
-appSyn = foldl1 app <$> many1 termSyn
+appSyn = foldl1 (expr . app) <$> many1 termSyn
 
 funType :: Iso (Expr, Expr) Expr
-funType = (forall `pap` True)
-          . (oneway (\t -> Wildcard $ TypedId True t "_") *** id)
+funType =
+    expr
+    . (forall `pap` True)
+    . first (oneway (\t -> Wildcard $ TypedId True t "_"))
 
 
 termSyn :: Syntax d => d Expr
-termSyn
-      = Omitted <$ keyword "_"
+termSyn =
+    (expr <$>)
+      $ Omitted <$ keyword "_"
     <|> set <$> keyword "Set" *> natural
     <|> lam <$> lambdaSign *> paramSyn <* arrowSign <*> exprSyn
     <|> forall `pap` True <$> forallSign *> paramSyn <* commaSign <*> exprSyn
     <|> var <$> nameSyn
 
 binderSyn :: Syntax d => d Id
-binderSyn = typedIdSyn
+binderSyn = idSyn <|> typedIdSyn
 
 paramSyn :: Syntax d => d Param
 paramSyn = wildcard <$>
@@ -106,7 +112,7 @@ wildcardSyn :: Syntax d => d Name
 wildcardSyn = "_" <$ keyword "_"
 
 idSyn :: Syntax d => d Id
-idSyn = typedId `pap` False `pap` Omitted <$> nameSyn
+idSyn = typedId `pap` False `pap` omittedTerm <$> nameSyn
 
 typedIdSyn :: Syntax d => d Id
 typedIdSyn = (typedId `pap` True) . commute
@@ -168,6 +174,14 @@ foldl1 f = foldl f . inverse cons
 
 oneway :: (alpha -> beta) -> Iso alpha beta
 oneway f = Iso (Just . f) (const Nothing)
+
+first :: Iso alpha beta -> Iso (alpha, gamma) (beta, gamma)
+first = (*** id)
+
+second :: Iso alpha beta -> Iso (gamma, alpha) (gamma, beta)
+second = (id ***)
+
+-- Parser
 
 newtype Parser a = Parser (Rope -> Either Position (a, Rope))
 
